@@ -1,8 +1,8 @@
 import numpy as np
 import tensorflow as tf
 import gym
+#from . import logz
 import logz
-import scipy.signal
 import os
 import time
 import inspect
@@ -34,8 +34,11 @@ def build_mlp(
     #========================================================================================#
 
     with tf.variable_scope(scope):
-        # YOUR_CODE_HERE
-        pass
+        inputs = input_placeholder
+        for i in range(n_layers):
+            inputs = tf.layers.dense(inputs=inputs, units=size, activation=activation)
+        output = tf.layers.dense(inputs=inputs, units=output_size, activation=output_activation)
+        return output
 
 def pathlength(path):
     return len(path["reward"])
@@ -123,7 +126,7 @@ def train_PG(exp_name='',
         sy_ac_na = tf.placeholder(shape=[None, ac_dim], name="ac", dtype=tf.float32) 
 
     # Define a placeholder for advantages
-    sy_adv_n = TODO
+    sy_adv_n = tf.placeholder(shape=[None], name="adv", dtype=tf.float32)
 
 
     #========================================================================================#
@@ -167,16 +170,22 @@ def train_PG(exp_name='',
 
     if discrete:
         # YOUR_CODE_HERE
-        sy_logits_na = TODO
-        sy_sampled_ac = TODO # Hint: Use the tf.multinomial op
-        sy_logprob_n = TODO
+        sy_logits_na = build_mlp(sy_ob_no, ac_dim, 'discrete', n_layers, size)
+        # softmax生成prob被压缩在sparse_softmax_cross_entropy_with_logits中，提升效率
+        # 因此sy_logits_na是没有归一化的，但不影响分布sample的生成
+        sy_sampled_ac = tf.reshape(tf.multinomial(sy_logits_na, 1), [-1])  # Hint: Use the tf.multinomial op
+        # 这里加负号为了兼容 continuous的情况，loss也加负号
+        sy_logprob_n = -tf.nn.sparse_softmax_cross_entropy_with_logits(labels=sy_ac_na, logits=sy_logits_na)
 
     else:
         # YOUR_CODE_HERE
-        sy_mean = TODO
-        sy_logstd = TODO # logstd should just be a trainable variable, not a network output.
-        sy_sampled_ac = TODO
-        sy_logprob_n = TODO  # Hint: Use the log probability under a multivariate gaussian. 
+        sy_mean = build_mlp(sy_ob_no, ac_dim, 'continuous', n_layers, size)
+        # logstd should just be a trainable variable, not a network output.
+        # ??? why
+        sy_logstd = tf.get_variable('std', [ac_dim], dtype=tf.float32)
+        sy_sampled_ac = tf.random_normal(shape=tf.shape(sy_mean), mean=sy_mean, stddev=sy_logstd)
+        # Hint: Use the log probability under a multivariate gaussian.
+        sy_logprob_n = tf.contrib.distributions.MultivariateNormalDiag(loc=sy_mean, scale_diag=tf.exp(sy_logstd)).log_prob(sy_ac_na)
 
 
 
@@ -184,8 +193,8 @@ def train_PG(exp_name='',
     #                           ----------SECTION 4----------
     # Loss Function and Training Operation
     #========================================================================================#
-
-    loss = TODO # Loss function that we'll differentiate to get the policy gradient.
+    # Loss function that we'll differentiate to get the policy gradient.
+    loss = tf.reduce_mean(-sy_logprob_n * sy_adv_n)
     update_op = tf.train.AdamOptimizer(learning_rate).minimize(loss)
 
 
@@ -203,8 +212,9 @@ def train_PG(exp_name='',
                                 size=size))
         # Define placeholders for targets, a loss function and an update op for fitting a 
         # neural network baseline. These will be used to fit the neural network baseline. 
-        # YOUR_CODE_HERE
-        baseline_update_op = TODO
+        baseline_targets = tf.placeholder(shape=[None], name='baseline_targets', dtype=tf.float32)
+        baseline_loss = tf.nn.l2_loss(baseline_prediction - baseline_targets)
+        baseline_update_op = tf.train.AdamOptimizer(learning_rate).minimize(baseline_loss)
 
 
     #========================================================================================#
@@ -317,7 +327,16 @@ def train_PG(exp_name='',
         #====================================================================================#
 
         # YOUR_CODE_HERE
-        q_n = TODO
+        q_n = []
+        for path in paths:
+            reward = path['reward']
+            max_step = len(reward)
+            if reward_to_go:
+                q = [np.sum(np.power(gamma, np.arange(max_step-t))*reward[t:]) for t in range(max_step)]
+            else:
+                q = [np.sum(np.power(gamma, np.arange(max_step))*reward) for t in range(max_step)]
+            q_n.extend(q)
+
 
         #====================================================================================#
         #                           ----------SECTION 5----------
@@ -333,7 +352,10 @@ def train_PG(exp_name='',
             # (mean and std) of the current or previous batch of Q-values. (Goes with Hint
             # #bl2 below.)
 
-            b_n = TODO
+            b_n = sess.run(baseline_prediction, feed_dict={sy_ob_no: ob_no})
+            # b_n_norm = b_n - np.mean(b_n, axis=0) / (np.std(b_n, axis=0) + 1e-7)
+            # 这里b_n要根据qn设置回来，因为b_n在下面optimize时是标准化过的
+            b_n = b_n * np.std(q_n, axis=0) + np.mean(q_n, axis=0)
             adv_n = q_n - b_n
         else:
             adv_n = q_n.copy()
@@ -347,7 +369,9 @@ def train_PG(exp_name='',
             # On the next line, implement a trick which is known empirically to reduce variance
             # in policy gradient methods: normalize adv_n to have mean zero and std=1. 
             # YOUR_CODE_HERE
-            pass
+            adv_mean = np.mean(adv_n, axis=0)
+            adv_std = np.std(adv_n, axis=0)
+            adv_n = (adv_n - adv_mean) / (adv_std + 1e-7)
 
 
         #====================================================================================#
@@ -364,9 +388,12 @@ def train_PG(exp_name='',
             #
             # Hint #bl2: Instead of trying to target raw Q-values directly, rescale the 
             # targets to have mean zero and std=1. (Goes with Hint #bl1 above.)
+            # 标准化的q_n作为baseline的优化目标
+            q_n_mean = np.mean(q_n, axis=0)
+            q_n_std = np.std(q_n, axis=0)
+            q_n = (q_n - q_n_mean) / (q_n_std + 1e-7)
+            sess.run(baseline_update_op, feed_dict={sy_ob_no: ob_no, baseline_targets: q_n})
 
-            # YOUR_CODE_HERE
-            pass
 
         #====================================================================================#
         #                           ----------SECTION 4----------
@@ -378,13 +405,17 @@ def train_PG(exp_name='',
         # 
         # For debug purposes, you may wish to save the value of the loss function before
         # and after an update, and then log them below. 
-
-        # YOUR_CODE_HERE
+        # 输出两次loss是为了下面的log
+        feed_dict = {sy_ob_no: ob_no, sy_ac_na: ac_na, sy_adv_n: adv_n}
+        loss_1 = sess.run(loss, feed_dict)
+        sess.run(update_op, feed_dict)
+        loss_2 = sess.run(loss, feed_dict)
 
 
         # Log diagnostics
         returns = [path["reward"].sum() for path in paths]
         ep_lengths = [pathlength(path) for path in paths]
+        logz.log_tabular("LossDelta", loss_1 - loss_2)
         logz.log_tabular("Time", time.time() - start)
         logz.log_tabular("Iteration", itr)
         logz.log_tabular("AverageReturn", np.mean(returns))
