@@ -239,6 +239,12 @@ def train_PG(exp_name='',
         print("********** Iteration %i ************"%itr)
 
         # Collect paths until we have enough timesteps
+        # 每一轮结束或者超过max_path_length时会结束一次path
+        # 每一轮path结束后填充到paths中，检查一次总的batch步数是否超过batch需求数，超过了则退出，开始训练
+        # 因此每次训练的都是完整的数据
+
+        # PG算法每次都使用当前分布sample action，不涉及exploration
+        # TODO 改成observation和train分开两个进程，这样不用互相等待
         timesteps_this_batch = 0
         paths = []
         while True:
@@ -331,9 +337,10 @@ def train_PG(exp_name='',
         for path in paths:
             reward = path['reward']
             max_step = len(reward)
+            # 从当前t开始的value估算
             if reward_to_go:
                 q = [np.sum(np.power(gamma, np.arange(max_step-t))*reward[t:]) for t in range(max_step)]
-            else:
+            else: #整个trajectory的q值估算
                 q = [np.sum(np.power(gamma, np.arange(max_step))*reward) for t in range(max_step)]
             q_n.extend(q)
 
@@ -459,32 +466,52 @@ def main():
 
     max_path_length = args.ep_len if args.ep_len > 0 else None
 
-    for e in range(args.n_experiments):
-        seed = args.seed + 10*e
-        print('Running experiment with seed %d'%seed)
-        def train_func():
-            train_PG(
-                exp_name=args.exp_name,
-                env_name=args.env_name,
-                n_iter=args.n_iter,
-                gamma=args.discount,
-                min_timesteps_per_batch=args.batch_size,
-                max_path_length=max_path_length,
-                learning_rate=args.learning_rate,
-                reward_to_go=args.reward_to_go,
-                animate=args.render,
-                logdir=os.path.join(logdir,'%d'%seed),
-                normalize_advantages=not(args.dont_normalize_advantages),
-                nn_baseline=args.nn_baseline, 
-                seed=seed,
-                n_layers=args.n_layers,
-                size=args.size
-                )
-        # Awkward hacky process runs, because Tensorflow does not like
-        # repeatedly calling train_PG in the same thread.
-        p = Process(target=train_func, args=tuple())
-        p.start()
-        p.join()
+    # for e in range(args.n_experiments):
+    #     seed = args.seed + 10*e
+    #     print('Running experiment with seed %d'%seed)
+    #     def train_func():
+    #         train_PG(
+    #             exp_name=args.exp_name,
+    #             env_name=args.env_name,
+    #             n_iter=args.n_iter,
+    #             gamma=args.discount,
+    #             min_timesteps_per_batch=args.batch_size,
+    #             max_path_length=max_path_length,
+    #             learning_rate=args.learning_rate,
+    #             reward_to_go=args.reward_to_go,
+    #             animate=args.render,
+    #             logdir=os.path.join(logdir,'%d'%seed),
+    #             normalize_advantages=not(args.dont_normalize_advantages),
+    #             nn_baseline=args.nn_baseline,
+    #             seed=seed,
+    #             n_layers=args.n_layers,
+    #             size=args.size
+    #             )
+    #     # Awkward hacky process runs, because Tensorflow does not like
+    #     # repeatedly calling train_PG in the same thread.
+    #     p = Process(target=train_func, args=tuple())
+    #     p.start()
+    #     p.join()
+
+    seed = args.seed
+    print('Running experiment with seed %d' % seed)
+    train_PG(
+        exp_name=args.exp_name,
+        env_name=args.env_name,
+        n_iter=args.n_iter,
+        gamma=args.discount,
+        min_timesteps_per_batch=args.batch_size,
+        max_path_length=max_path_length,
+        learning_rate=args.learning_rate,
+        reward_to_go=args.reward_to_go,
+        animate=args.render,
+        logdir=os.path.join(logdir, '%d' % seed),
+        normalize_advantages=not (args.dont_normalize_advantages),
+        nn_baseline=args.nn_baseline,
+        seed=seed,
+        n_layers=args.n_layers,
+        size=args.size
+    )
         
 
 if __name__ == "__main__":
