@@ -80,6 +80,7 @@ def train_PG(exp_name='',
              n_layers=1,
              size=32,
              gae_lambda=-1.0,
+             batch_epochs=1,
              ):
     start = time.time()
 
@@ -354,96 +355,99 @@ def train_PG(exp_name='',
                 q = [np.sum(np.power(gamma, np.arange(max_step)) * reward) for t in range(max_step)]
             q_n.extend(q)
 
-        # ====================================================================================#
-        #                           ----------SECTION 5----------
-        # Computing Baselines
-        # ====================================================================================#
+        print('prepare data')
 
-        if nn_baseline:
-            # If nn_baseline is True, use your neural network to predict reward-to-go
-            # at each timestep for each trajectory, and save the result in a variable 'b_n'
-            # like 'ob_no', 'ac_na', and 'q_n'.
-            #
-            # Hint #bl1: rescale the output from the nn_baseline to match the statistics
-            # (mean and std) of the current or previous batch of Q-values. (Goes with Hint
-            # #bl2 below.)
-            b_n = sess.run(baseline_prediction, feed_dict={sy_ob_no: ob_no})
-            # b_n_norm = b_n - np.mean(b_n, axis=0) / (np.std(b_n, axis=0) + 1e-7)
-            # 这里b_n要根据qn设置回来，因为b_n在下面optimize时是标准化过的
-            b_n = b_n * np.std(q_n, axis=0) + np.mean(q_n, axis=0)
+        for epoch in range(batch_epochs):
+            # ====================================================================================#
+            #                           ----------SECTION 5----------
+            # Computing Baselines
+            # ====================================================================================#
+            print('run %d epoch' % epoch)
+            if nn_baseline:
+                # If nn_baseline is True, use your neural network to predict reward-to-go
+                # at each timestep for each trajectory, and save the result in a variable 'b_n'
+                # like 'ob_no', 'ac_na', and 'q_n'.
+                #
+                # Hint #bl1: rescale the output from the nn_baseline to match the statistics
+                # (mean and std) of the current or previous batch of Q-values. (Goes with Hint
+                # #bl2 below.)
+                b_n = sess.run(baseline_prediction, feed_dict={sy_ob_no: ob_no})
+                # b_n_norm = b_n - np.mean(b_n, axis=0) / (np.std(b_n, axis=0) + 1e-7)
+                # 这里b_n要根据qn设置回来，因为b_n在下面optimize时是标准化过的
+                b_n = b_n * np.std(q_n, axis=0) + np.mean(q_n, axis=0)
 
-            if gae_lambda>0:
-                adv_n = lambda_advantage(reward_n, b_n, len(reward_n), gae_lambda*gamma)
+                if gae_lambda>0:
+                    adv_n = lambda_advantage(reward_n, b_n, len(reward_n), gae_lambda*gamma)
+                else:
+                    adv_n = q_n - b_n
             else:
-                adv_n = q_n - b_n
-        else:
-            adv_n = q_n.copy()
+                adv_n = q_n.copy()
 
-        # ====================================================================================#
-        #                           ----------SECTION 4----------
-        # Advantage Normalization
-        # ====================================================================================#
+            # ====================================================================================#
+            #                           ----------SECTION 4----------
+            # Advantage Normalization
+            # ====================================================================================#
 
-        if normalize_advantages:
-            # On the next line, implement a trick which is known empirically to reduce variance
-            # in policy gradient methods: normalize adv_n to have mean zero and std=1. 
-            # YOUR_CODE_HERE
-            adv_mean = np.mean(adv_n, axis=0)
-            adv_std = np.std(adv_n, axis=0)
-            adv_n = (adv_n - adv_mean) / (adv_std + 1e-7)
+            if normalize_advantages:
+                # On the next line, implement a trick which is known empirically to reduce variance
+                # in policy gradient methods: normalize adv_n to have mean zero and std=1.
+                # YOUR_CODE_HERE
+                adv_mean = np.mean(adv_n, axis=0)
+                adv_std = np.std(adv_n, axis=0)
+                adv_n = (adv_n - adv_mean) / (adv_std + 1e-7)
 
-        # ====================================================================================#
-        #                           ----------SECTION 5----------
-        # Optimizing Neural Network Baseline
-        # ====================================================================================#
-        if nn_baseline:
-            # ----------SECTION 5----------
-            # If a neural network baseline is used, set up the targets and the inputs for the 
-            # baseline. 
-            # 
-            # Fit it to the current batch in order to use for the next iteration. Use the 
-            # baseline_update_op you defined earlier.
+            # ====================================================================================#
+            #                           ----------SECTION 5----------
+            # Optimizing Neural Network Baseline
+            # ====================================================================================#
+            if nn_baseline:
+                # ----------SECTION 5----------
+                # If a neural network baseline is used, set up the targets and the inputs for the
+                # baseline.
+                #
+                # Fit it to the current batch in order to use for the next iteration. Use the
+                # baseline_update_op you defined earlier.
+                #
+                # Hint #bl2: Instead of trying to target raw Q-values directly, rescale the
+                # targets to have mean zero and std=1. (Goes with Hint #bl1 above.)
+                # 标准化的q_n作为baseline的优化目标
+                q_n_mean = np.mean(q_n, axis=0)
+                q_n_std = np.std(q_n, axis=0)
+                q_n = (q_n - q_n_mean) / (q_n_std + 1e-7)
+                sess.run(baseline_update_op, feed_dict={sy_ob_no: ob_no, baseline_targets: q_n})
+
+            # ====================================================================================#
+            #                           ----------SECTION 4----------
+            # Performing the Policy Update
+            # ====================================================================================#
+
+            # Call the update operation necessary to perform the policy gradient update based on
+            # the current batch of rollouts.
             #
-            # Hint #bl2: Instead of trying to target raw Q-values directly, rescale the 
-            # targets to have mean zero and std=1. (Goes with Hint #bl1 above.)
-            # 标准化的q_n作为baseline的优化目标
-            q_n_mean = np.mean(q_n, axis=0)
-            q_n_std = np.std(q_n, axis=0)
-            q_n = (q_n - q_n_mean) / (q_n_std + 1e-7)
-            sess.run(baseline_update_op, feed_dict={sy_ob_no: ob_no, baseline_targets: q_n})
+            # For debug purposes, you may wish to save the value of the loss function before
+            # and after an update, and then log them below.
+            # 输出两次loss是为了下面的log
+            feed_dict = {sy_ob_no: ob_no, sy_ac_na: ac_na, sy_adv_n: adv_n}
+            loss_1 = sess.run(loss, feed_dict)
+            sess.run(update_op, feed_dict)
+            loss_2 = sess.run(loss, feed_dict)
 
-        # ====================================================================================#
-        #                           ----------SECTION 4----------
-        # Performing the Policy Update
-        # ====================================================================================#
-
-        # Call the update operation necessary to perform the policy gradient update based on 
-        # the current batch of rollouts.
-        # 
-        # For debug purposes, you may wish to save the value of the loss function before
-        # and after an update, and then log them below. 
-        # 输出两次loss是为了下面的log
-        feed_dict = {sy_ob_no: ob_no, sy_ac_na: ac_na, sy_adv_n: adv_n}
-        loss_1 = sess.run(loss, feed_dict)
-        sess.run(update_op, feed_dict)
-        loss_2 = sess.run(loss, feed_dict)
-
-        # Log diagnostics
-        returns = [path["reward"].sum() for path in paths]
-        ep_lengths = [pathlength(path) for path in paths]
-        logz.log_tabular("LossDelta", loss_1 - loss_2)
-        logz.log_tabular("Time", time.time() - start)
-        logz.log_tabular("Iteration", itr)
-        logz.log_tabular("AverageReturn", np.mean(returns))
-        logz.log_tabular("StdReturn", np.std(returns))
-        logz.log_tabular("MaxReturn", np.max(returns))
-        logz.log_tabular("MinReturn", np.min(returns))
-        logz.log_tabular("EpLenMean", np.mean(ep_lengths))
-        logz.log_tabular("EpLenStd", np.std(ep_lengths))
-        logz.log_tabular("TimestepsThisBatch", timesteps_this_batch)
-        logz.log_tabular("TimestepsSoFar", total_timesteps)
-        logz.dump_tabular()
-        logz.pickle_tf_vars()
+            # Log diagnostics
+            returns = [path["reward"].sum() for path in paths]
+            ep_lengths = [pathlength(path) for path in paths]
+            logz.log_tabular("LossDelta", loss_1 - loss_2)
+            logz.log_tabular("Time", time.time() - start)
+            logz.log_tabular("Iteration", itr)
+            logz.log_tabular("AverageReturn", np.mean(returns))
+            logz.log_tabular("StdReturn", np.std(returns))
+            logz.log_tabular("MaxReturn", np.max(returns))
+            logz.log_tabular("MinReturn", np.min(returns))
+            logz.log_tabular("EpLenMean", np.mean(ep_lengths))
+            logz.log_tabular("EpLenStd", np.std(ep_lengths))
+            logz.log_tabular("TimestepsThisBatch", timesteps_this_batch)
+            logz.log_tabular("TimestepsSoFar", total_timesteps)
+            logz.dump_tabular()
+            logz.pickle_tf_vars()
 
 
 def main():
@@ -465,6 +469,7 @@ def main():
     parser.add_argument('--n_layers', '-l', type=int, default=1)
     parser.add_argument('--size', '-s', type=int, default=32)
     parser.add_argument('--gae_lambda', '-gae', type=float, default=-1.0)
+    parser.add_argument('--batch_epochs', '-be', type=int, default=1)
     args = parser.parse_args()
 
     if not (os.path.exists('data')):
@@ -521,7 +526,8 @@ def main():
         seed=seed,
         n_layers=args.n_layers,
         size=args.size,
-        gae_lambda=args.gae_lambda
+        gae_lambda=args.gae_lambda,
+        batch_epochs=args.batch_epochs
     )
 
 
