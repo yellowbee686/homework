@@ -132,11 +132,11 @@ def learn(env,
     # YOUR CODE HERE
 
     ######
-    q = q_func(obs_t_float, num_actions, "q_func", False)
-    target_q = q_func(obs_tp1_float, num_actions, "target_q_func", False)
-    one_forward_q = rew_t_ph + (1-done_mask_ph)*gamma*tf.reduce_max(target_q, axis=1)
-    #TODO why one_hot???
-    q_sample = tf.reduce_sum(q*tf.one_hot(act_t_ph, num_actions), axis=1)
+    q_network = q_func(obs_t_float, num_actions, "q_func", False)
+    target_q_network = q_func(obs_tp1_float, num_actions, "target_q_func", False)
+    one_forward_q = rew_t_ph + (1-done_mask_ph)*gamma*tf.reduce_max(target_q_network, axis=1)
+    #因为这里传入的都是一个batch的数据，而不是一项，因此需要最后沿着第1维reduce_sum，才是一个batch中每一个q_sample的值
+    q_sample = tf.reduce_sum(q_network*tf.one_hot(act_t_ph, num_actions), axis=1)
     total_error = tf.reduce_mean(tf.square(one_forward_q - q_sample))
     q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='q_func')
     target_q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='target_q_func')
@@ -207,6 +207,20 @@ def learn(env,
         # YOUR CODE HERE
 
         #####
+        buffer_idx = replay_buffer.store_frame(last_obs)
+        observation = replay_buffer.encode_recent_observation()
+        if (np.random.random()<exploration.value(t)) or not model_initialized:
+            action = env.action_space.sample()
+        else:
+            q_values = session.run(q_network, feed_dict={obs_t_ph: [observation]})[0]
+            action = np.argmax(q_values)
+
+        next_obs, reward, done, info = env.step(action)
+        replay_buffer.store_effect(buffer_idx, action, reward, done)
+        if done:
+            last_obs = env.reset()
+        else:
+            last_obs = next_obs
 
         # at this point, the environment should have been advanced one step (and
         # reset if done was true), and last_obs should point to the new latest
@@ -257,6 +271,27 @@ def learn(env,
             # YOUR CODE HERE
 
             #####
+            obs_batch, act_batch, rew_batch, next_obs_batch, done_mask = replay_buffer.sample(batch_size)
+            if not model_initialized:
+                initialize_interdependent_variables(session, tf.global_variables(), {
+                           obs_t_ph: obs_batch,
+                           obs_tp1_ph: next_obs_batch,
+                       })
+                model_initialized = True
+
+            session.run(train_fn, feed_dict={
+                obs_t_ph: obs_batch,
+                act_t_ph: act_batch,
+                rew_t_ph: rew_batch,
+                obs_tp1_ph: next_obs_batch,
+                done_mask_ph: done_mask,
+                learning_rate: optimizer_spec.lr_schedule.value(t) #根据学习进程采用不同的learning_rate
+            })
+
+            num_param_updates = num_param_updates+1
+            if num_param_updates % target_update_freq:
+                session.run(update_target_fn)
+                num_param_updates = 0
 
         ### 4. Log progress
         episode_rewards = get_wrapper_by_name(env, "Monitor").get_episode_rewards()
