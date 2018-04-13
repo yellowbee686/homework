@@ -132,6 +132,14 @@ def learn(env,
     # YOUR CODE HERE
 
     ######
+    q = q_func(obs_t_float, num_actions, "q_func", False)
+    target_q = q_func(obs_tp1_float, num_actions, "target_q_func", False)
+    one_forward_q = rew_t_ph + (1-done_mask_ph)*gamma*tf.reduce_max(target_q, axis=1)
+    #TODO why one_hot???
+    q_sample = tf.reduce_sum(q*tf.one_hot(act_t_ph, num_actions), axis=1)
+    total_error = tf.reduce_mean(tf.square(one_forward_q - q_sample))
+    q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='q_func')
+    target_q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='target_q_func')
 
     # construct optimization op (with gradient clipping)
     learning_rate = tf.placeholder(tf.float32, (), name="learning_rate")
