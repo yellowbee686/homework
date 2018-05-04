@@ -1,63 +1,13 @@
 import numpy as np
 import tensorflow as tf
 import gym
-# from . import logz
-import logz
+from . import logz
+#import logz
 import os
 import time
 import inspect
+from .pg_utils import *
 from multiprocessing import Process
-
-
-# ============================================================================================#
-# Utilities
-# ============================================================================================#
-
-def build_mlp(
-        input_placeholder,
-        output_size,
-        scope,
-        n_layers=2,
-        size=64,
-        activation=tf.tanh,
-        output_activation=None
-):
-    # ========================================================================================#
-    #                           ----------SECTION 3----------
-    # Network building
-    #
-    # Your code should make a feedforward neural network (also called a multilayer perceptron)
-    # with 'n_layers' hidden layers of size 'size' units. 
-    # 
-    # The output layer should have size 'output_size' and activation 'output_activation'.
-    #
-    # Hint: use tf.layers.dense
-    # ========================================================================================#
-
-    with tf.variable_scope(scope):
-        inputs = input_placeholder
-        for i in range(n_layers):
-            inputs = tf.layers.dense(inputs=inputs, units=size, activation=activation)
-        output = tf.layers.dense(inputs=inputs, units=output_size, activation=output_activation)
-        return output
-
-
-def pathlength(path):
-    return len(path["reward"])
-
-
-def lambda_advantage(reward, value, length, discount):
-    """Generalized Advantage Estimation."""
-    timestep = tf.range(reward.shape[1].value)
-    mask = tf.cast(timestep[None, :] < length[:, None], tf.float32)
-    next_value = tf.concat([value[:, 1:], tf.zeros_like(value[:, -1:])], 1)
-    delta = reward + discount * next_value - value
-    advantage = tf.reverse(tf.transpose(tf.scan(
-        lambda agg, cur: cur + discount * agg,
-        tf.transpose(tf.reverse(mask * delta, [1]), [1, 0]),
-        tf.zeros_like(delta[:, -1]), 1, False), [1, 0]), [1])
-    return tf.check_numerics(tf.stop_gradient(advantage), 'advantage')
-
 
 # ============================================================================================#
 # Policy Gradient
@@ -88,7 +38,7 @@ def train_PG(exp_name='',
     logz.configure_output_dir(logdir)
 
     # Log experimental parameters
-    args = inspect.getargspec(train_PG)[0]
+    args = inspect.getfullargspec(train_PG)[0]
     locals_ = locals()
     params = {k: locals_[k] if k in locals_ else None for k in args}
     logz.save_params(params)
@@ -448,7 +398,6 @@ def train_PG(exp_name='',
             logz.log_tabular("TimestepsSoFar", total_timesteps)
             logz.dump_tabular()
             logz.pickle_tf_vars()
-
 
 def main():
     import argparse
