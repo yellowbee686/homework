@@ -31,6 +31,9 @@ def train_PG(exp_name='',
              size=32,
              gae_lambda=-1.0,
              batch_epochs=1,
+             model_tag='vanilla',
+             #ppo parameter
+             clip_ratio=0.2,
              ):
     start = time.time()
 
@@ -157,7 +160,19 @@ def train_PG(exp_name='',
     # Loss Function and Training Operation
     # ========================================================================================#
     # Loss function that we'll differentiate to get the policy gradient.
-    loss = tf.reduce_mean(-sy_logprob_n * sy_adv_n)
+    # ppo clip loss
+    if model_tag == 'ppo':
+        old_log_prob = tf.stop_gradient(input=sy_logprob_n)
+        prob_ratio = tf.exp(x=(sy_logprob_n - old_log_prob))
+        prob_ratio = tf.reduce_mean(input_tensor=prob_ratio, axis=1)
+        clipped_prob_ratio = tf.clip_by_value(
+            t=prob_ratio,
+            clip_value_min=(1.0 - clip_ratio),
+            clip_value_max=(1.0 + clip_ratio)
+        )
+        return -tf.minimum(x=(prob_ratio * sy_adv_n), y=(clipped_prob_ratio * sy_adv_n))
+    else: #vanilla pg
+        loss = tf.reduce_mean(-sy_logprob_n * sy_adv_n)
     update_op = tf.train.AdamOptimizer(learning_rate).minimize(loss)
 
     # ========================================================================================#
@@ -304,8 +319,6 @@ def train_PG(exp_name='',
             else:  # 整个trajectory的q值估算
                 q = [np.sum(np.power(gamma, np.arange(max_step)) * reward) for t in range(max_step)]
             q_n.extend(q)
-
-        print('prepare data')
 
         for epoch in range(batch_epochs):
             # ====================================================================================#
