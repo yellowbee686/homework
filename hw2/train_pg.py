@@ -138,16 +138,22 @@ def train_PG(exp_name='', #参数方案的名称
 
     if discrete:
         # YOUR_CODE_HERE
-        sy_logits_na = build_mlp(sy_ob_no, ac_dim, 'discrete', n_layers, size)
+        scope_name = 'discrete'
+        old_scope_name = 'discrete_old'
+        sy_logits_na = build_mlp(sy_ob_no, ac_dim, scope_name, n_layers, size)
         # softmax生成prob被压缩在sparse_softmax_cross_entropy_with_logits中，提升效率
         # 因此sy_logits_na是没有归一化的，但不影响分布sample的生成
         sy_sampled_ac = tf.reshape(tf.multinomial(sy_logits_na, 1), [-1])  # Hint: Use the tf.multinomial op
         # 这里加负号为了兼容 continuous的情况，loss也加负号
         sy_logprob_n = -tf.nn.sparse_softmax_cross_entropy_with_logits(labels=sy_ac_na, logits=sy_logits_na)
 
+        old_logits_na = build_mlp(sy_ob_no, ac_dim, old_scope_name, n_layers, size)
+        old_sy_logprob_n = -tf.nn.sparse_softmax_cross_entropy_with_logits(labels=sy_ac_na, logits=old_logits_na)
     else:
         # YOUR_CODE_HERE
-        sy_mean = build_mlp(sy_ob_no, ac_dim, 'continuous', n_layers, size)
+        scope_name = 'continuous'
+        old_scope_name = 'continuous_old'
+        sy_mean = build_mlp(sy_ob_no, ac_dim, scope_name, n_layers, size)
         # logstd should just be a trainable variable, not a network output.
         # ??? why
         sy_logstd = tf.get_variable('std', [ac_dim], dtype=tf.float32)
@@ -155,6 +161,16 @@ def train_PG(exp_name='', #参数方案的名称
         # Hint: Use the log probability under a multivariate gaussian.
         sy_logprob_n = tf.contrib.distributions.MultivariateNormalDiag(loc=sy_mean,
                                                                        scale_diag=tf.exp(sy_logstd)).log_prob(sy_ac_na)
+
+        old_sy_mean = build_mlp(sy_ob_no, ac_dim, old_scope_name, n_layers, size)
+        old_sy_logprob_n = tf.contrib.distributions.MultivariateNormalDiag(loc=old_sy_mean,
+                                                                       scale_diag=tf.exp(sy_logstd)).log_prob(sy_ac_na)
+
+
+    old_network_param = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, old_scope_name)
+    network_param = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope_name)
+    param_assign_op = [tf.assign(old_value, new_value) for (old_value, new_value) in zip(old_network_param, network_param)]
+
 
     # ========================================================================================#
     #                           ----------SECTION 4----------
@@ -164,8 +180,8 @@ def train_PG(exp_name='', #参数方案的名称
     # ppo clip loss
     if model_tag == 'ppo':
         # 和tensorforce不同 这里stop_gradient之后的梯度为0，导致lossDelta为0
-        old_log_prob = tf.stop_gradient(input=sy_logprob_n)
-        prob_ratio = tf.exp(x=(sy_logprob_n - old_log_prob))
+        #old_log_prob = tf.stop_gradient(input=sy_logprob_n)
+        prob_ratio = tf.exp(x=(sy_logprob_n - old_sy_logprob_n))
         # 这里无法指定axis=1 因为只有一维，剩下的一维就是[?] 即batch_size
         prob_ratio = tf.reduce_mean(input_tensor=prob_ratio)
         clipped_prob_ratio = tf.clip_by_value(
@@ -394,6 +410,7 @@ def train_PG(exp_name='', #参数方案的名称
             # and after an update, and then log them below.
             # 输出两次loss是为了下面的log
             feed_dict = {sy_ob_no: ob_no, sy_ac_na: ac_na, sy_adv_n: adv_n}
+            sess.run(param_assign_op, feed_dict)
             loss_1 = sess.run(loss, feed_dict)
             sess.run(update_op, feed_dict)
             loss_2 = sess.run(loss, feed_dict)
