@@ -174,8 +174,6 @@ def train_DDPG(exp_name='',
         # todo train process
         # todo memory sample in paths
         for epoch in range(batch_epochs):
-
-
             # Log diagnostics
             returns = [path["reward"].sum() for path in paths]
             ep_lengths = [pathlength(path) for path in paths]

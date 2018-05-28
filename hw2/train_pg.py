@@ -1,19 +1,20 @@
 import numpy as np
 import tensorflow as tf
 import gym
-from . import logz
-#import logz
+#from . import logz
+import logz
 import os
 import time
 import inspect
-from .pg_utils import *
+from pg_utils import *
+#import pg_utils
 from multiprocessing import Process
 
 # ============================================================================================#
 # Policy Gradient
 # ============================================================================================#
 
-def train_PG(exp_name='',
+def train_PG(exp_name='', #参数方案的名称
              env_name='CartPole-v0',
              n_iter=100,
              gamma=1.0,
@@ -162,15 +163,17 @@ def train_PG(exp_name='',
     # Loss function that we'll differentiate to get the policy gradient.
     # ppo clip loss
     if model_tag == 'ppo':
+        # 和tensorforce不同 这里stop_gradient之后的梯度为0，导致lossDelta为0
         old_log_prob = tf.stop_gradient(input=sy_logprob_n)
         prob_ratio = tf.exp(x=(sy_logprob_n - old_log_prob))
-        prob_ratio = tf.reduce_mean(input_tensor=prob_ratio, axis=1)
+        # 这里无法指定axis=1 因为只有一维，剩下的一维就是[?] 即batch_size
+        prob_ratio = tf.reduce_mean(input_tensor=prob_ratio)
         clipped_prob_ratio = tf.clip_by_value(
             t=prob_ratio,
             clip_value_min=(1.0 - clip_ratio),
             clip_value_max=(1.0 + clip_ratio)
         )
-        return -tf.minimum(x=(prob_ratio * sy_adv_n), y=(clipped_prob_ratio * sy_adv_n))
+        loss = tf.reduce_mean(-tf.minimum(x=(prob_ratio * sy_adv_n), y=(clipped_prob_ratio * sy_adv_n)))
     else: #vanilla pg
         loss = tf.reduce_mean(-sy_logprob_n * sy_adv_n)
     update_op = tf.train.AdamOptimizer(learning_rate).minimize(loss)
@@ -325,7 +328,7 @@ def train_PG(exp_name='',
             #                           ----------SECTION 5----------
             # Computing Baselines
             # ====================================================================================#
-            print('run %d epoch' % epoch)
+            #print('run %d epoch' % epoch)
             if nn_baseline:
                 # If nn_baseline is True, use your neural network to predict reward-to-go
                 # at each timestep for each trajectory, and save the result in a variable 'b_n'
@@ -489,7 +492,8 @@ def main():
         n_layers=args.n_layers,
         size=args.size,
         gae_lambda=args.gae_lambda,
-        batch_epochs=args.batch_epochs
+        batch_epochs=args.batch_epochs,
+        model_tag='ppo'
     )
 
 
