@@ -82,9 +82,10 @@ def train_DDPG(exp_name='',
     target_actor_tf = build_actor(sy_ob_next, ac_dim, scope_name='target_actor')
     # 输入的是action的placeholder
     critic_tf = build_critic(sy_ob_no, sy_actions, scope_name='critic')
-    # 输入的是模型选择的action
+    # 输入的是模型的action概率分布，将这个输入到critic的第二层，也算是actor和critic共用一部分参数
+    # critic_tf和critic_with_actor_tf使用同一个网络，只是输入的action不同
     critic_with_actor_tf = build_critic(sy_ob_no, actor_tf, scope_name='critic', reuse=True)
-    # 下一个state按照模型选择的q值
+    # 计算next_q时用的是target_actor的输出作为actor部分的输入
     next_q = build_critic(sy_ob_next, target_actor_tf, scope_name='target_critic')
     target_q = sy_rewards + (1 - terminal_next) * gamma * next_q
 

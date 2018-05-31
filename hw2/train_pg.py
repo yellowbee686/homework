@@ -192,6 +192,8 @@ def train_PG(exp_name='', #参数方案的名称
         loss = tf.reduce_mean(-tf.minimum(x=(prob_ratio * sy_adv_n), y=(clipped_prob_ratio * sy_adv_n)))
     else: #vanilla pg
         loss = tf.reduce_mean(-sy_logprob_n * sy_adv_n)
+
+    loss = tf.Print(loss, [loss, loss.shape], 'debug loss')
     update_op = tf.train.AdamOptimizer(learning_rate).minimize(loss)
 
     # ========================================================================================#

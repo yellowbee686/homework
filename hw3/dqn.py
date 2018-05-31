@@ -25,7 +25,8 @@ def learn(env,
           learning_freq=4,
           frame_history_len=4,
           target_update_freq=10000,
-          grad_norm_clipping=10):
+          grad_norm_clipping=10,
+          double_q = False,):
     """Run Deep Q-learning algorithm.
 
     You can specify your own convnet using q_func.
@@ -134,7 +135,12 @@ def learn(env,
     ######
     q_network = q_func(obs_t_float, num_actions, "q_func", False)
     target_q_network = q_func(obs_tp1_float, num_actions, "target_q_func", False)
-    one_forward_q = rew_t_ph + (1-done_mask_ph)*gamma*tf.reduce_max(target_q_network, axis=1)
+    if double_q:
+        best_action_index = tf.argmax(q_network, axis=1)
+        best_next_q = tf.reduce_sum(target_q_network * tf.one_hot(best_action_index, num_actions), 1)
+    else:
+        best_next_q = tf.reduce_max(target_q_network, axis=1)
+    one_forward_q = rew_t_ph + (1 - done_mask_ph) * gamma * best_next_q
     #因为这里传入的都是一个batch的数据，而不是一项，因此需要最后沿着第1维reduce_sum，才是一个batch中每一个q_sample的值
     q_sample = tf.reduce_sum(q_network*tf.one_hot(act_t_ph, num_actions), axis=1)
     total_error = tf.reduce_mean(tf.square(one_forward_q - q_sample))
