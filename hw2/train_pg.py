@@ -6,7 +6,7 @@ import logz
 import os
 import time
 import inspect
-from pg_utils import *
+from .pg_utils import *
 #import pg_utils
 from multiprocessing import Process
 
@@ -94,7 +94,7 @@ def train_PG(exp_name='', #参数方案的名称
     else:
         sy_ac_na = tf.placeholder(shape=[None, ac_dim], name="ac", dtype=tf.float32)
 
-        # Define a placeholder for advantages
+    # Define a placeholder for advantages
     sy_adv_n = tf.placeholder(shape=[None], name="adv", dtype=tf.float32)
 
     # ========================================================================================#
@@ -231,8 +231,6 @@ def train_PG(exp_name='', #参数方案的名称
     total_timesteps = 0
 
     for itr in range(n_iter):
-        print("********** Iteration %i ************" % itr)
-
         # Collect paths until we have enough timesteps
         # 每一轮结束或者超过max_path_length时会结束一次path
         # 每一轮path结束后填充到paths中，检查一次总的batch步数是否超过batch需求数，超过了则退出，开始训练
