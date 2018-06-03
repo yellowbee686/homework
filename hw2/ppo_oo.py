@@ -6,7 +6,7 @@ import logz
 import os
 import time
 import inspect
-from pg_utils import *
+from .pg_utils import *
 #import pg_utils
 from multiprocessing import Process
 
@@ -20,7 +20,6 @@ class PPO(object):
                  logdir=None,
                  normalize_advantages=True,
                  nn_baseline=False,
-                 seed=0,
                  # network arguments
                  n_layers=1,
                  size=32,
@@ -29,7 +28,6 @@ class PPO(object):
                  #ppo parameter
                  clip_ratio=0.2,):
         #params
-        self.seed = seed
         self.nn_baseline = nn_baseline
         self.learning_rate = learning_rate
         self.gamma = gamma
@@ -140,11 +138,17 @@ class PPO(object):
         self.baseline_loss = tf.nn.l2_loss(baseline_prediction - baseline_targets)
         self.baseline_update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.baseline_loss)
 
-    def train(self, n_iter=100, animate=True, min_timesteps_per_batch=1000,batch_epochs=1,reward_to_go=True,):
+    def train(self,
+              n_iter=100,
+              seed=0,
+              animate=True,
+              min_timesteps_per_batch=1000,
+              batch_epochs=1,
+              reward_to_go=True,):
         start = time.time()
         # Set random seeds
-        tf.set_random_seed(self.seed)
-        np.random.seed(self.seed)
+        tf.set_random_seed(seed)
+        np.random.seed(seed)
 
         tf_config = tf.ConfigProto(inter_op_parallelism_threads=1, intra_op_parallelism_threads=1)
         sess = tf.Session(config=tf_config)
@@ -370,13 +374,13 @@ def main():
         logdir=os.path.join(logdir, '%d' % seed),
         normalize_advantages=not (args.dont_normalize_advantages),
         nn_baseline=args.nn_baseline,
-        seed=seed,
         n_layers=args.n_layers,
         size=args.size,
         gae_lambda=args.gae_lambda,
         model_tag='ppo'
     )
     ppo.train(n_iter=args.n_iter,
+              seed=seed,
               min_timesteps_per_batch=args.batch_size,
               reward_to_go=args.reward_to_go,
               animate=args.render,
