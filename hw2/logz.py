@@ -110,3 +110,6 @@ def dump_tabular():
         G.output_file.flush()
     G.log_current_row.clear()
     G.first_row=False
+
+
+__all__ = ['G']

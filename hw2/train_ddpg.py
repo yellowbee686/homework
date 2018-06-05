@@ -1,11 +1,11 @@
 import numpy as np
+from pg_utils import *
 import tensorflow as tf
 import gym
-from . import logz
-#import logz
+import logz
 import time
 import inspect
-from .pg_utils import *
+from memory import Memory
 
 #todo add action_noise
 #todo add every normalize denormalize
@@ -69,7 +69,6 @@ class DDPG(object):
                  exp_name='',
                  env_name='CartPole-v0',
                  gamma=1.0,
-
                  actor_lr=1e-4,
                  critic_lr=1e-3,
                  logdir=None,
@@ -82,6 +81,7 @@ class DDPG(object):
                 ):
         self.gamma = gamma
         self.actor_lr = actor_lr
+        self.critic_lr = critic_lr
         self.normalize_returns = normalize_returns
         self.n_layers = n_layers
         self.size = size
@@ -100,18 +100,55 @@ class DDPG(object):
         self.env = gym.make(env_name)
         # Is this env continuous, or discrete?
         self.discrete = isinstance(self.env.action_space, gym.spaces.Discrete)
+        self.memory = Memory(limit=int(1e6), action_shape=self.env.action_space.shape, observation_shape=self.env.observation_space.shape)
         self.setup_placeholders()
         self.setup_network()
 
+    def sample_action(self,obs,compute_Q=True):
+        feed_dict = {self.sy_ob_no:[obs]}
+        if compute_Q:
+            action, q = self.sess.run([self.actor_tf, self.critic_with_actor_tf], feed_dict=feed_dict)
+        else:
+            action = self.sess.run(self.actor_tf, feed_dict=feed_dict)
+            q = None
+        action = action.flatten()
+        return action, q
+
+    def soft_sync_target_actor(self):
+        self.sess.run(self.target_soft_updates)
+
+    def store_transition(self, obs0, action, reward, obs1, terminal1):
+        self.memory.append(obs0, action, reward, obs1, terminal1)
+
+    # 相当于baseline.ddpg.train 执行一次更新，
+    def update_loss(self):
+        batch = self.memory.sample(batch_size=self.batch_size)
+
+        target_Q = self.sess.run(self.target_q, feed_dict={
+            self.sy_ob_next: batch['obs1'],
+            self.sy_rewards: batch['rewards'],
+            self.terminal_next: batch['terminals1'].astype('float32'),
+        })
+        ops = [self.actor_loss, self.critic_loss, self.actor_update_op, self.critic_update_op]
+        actor_loss, critic_loss, _, _ = self.sess.run(ops, feed_dict={
+            self.sy_ob_no: batch['obs0'],
+            self.sy_actions: batch['actions'],
+            self.sy_critic_targets: target_Q,
+        })
+
+        return critic_loss, actor_loss
+
+    # 完整的训练流程
     def train(self,
               seed=0,
               n_iter=100,
               animate=True,
               min_timesteps_per_batch=1000,
               batch_epochs=1,
-              reward_to_go=True,
+              batch_size = 32,
               max_path_length=None,
               ):
+        self.batch_size = batch_size
         start = time.time()
         # Set random seeds
         tf.set_random_seed(seed)
@@ -121,10 +158,11 @@ class DDPG(object):
         tf_config = tf.ConfigProto(inter_op_parallelism_threads=1, intra_op_parallelism_threads=1)
 
         sess = tf.Session(config=tf_config)
+        self.sess = sess
         sess.__enter__()  # equivalent to `with sess:`
         tf.global_variables_initializer().run()  # pylint: disable=E1101
         sess.run(self.target_init_updates)
-
+        sess.graph.finalize() #make it readonly, speed up
         # ========================================================================================#
         # Training Loop
         # ========================================================================================#
@@ -153,12 +191,16 @@ class DDPG(object):
                         self.env.render()
                         time.sleep(0.05)
                     obs.append(ob)
-                    ac, q = sess.run([self.actor_tf, self.critic_with_actor_tf], feed_dict={self.sy_ob_no: ob})
+                    # eval_obs, eval_r, eval_done, eval_info = eval_env.step(max_action * eval_action)
+                    # scale for execution in env (as far as DDPG is concerned, every action is in [-1, 1])
+                    # baseline将action限制在-1,1 再scale 可以看下这样是否有必要
+                    ac, q = self.sample_action(ob, True)
                     acs.append(ac)
                     ob_next, rew, done, _ = self.env.step(ac)
                     ob_nexts.append(ob_next)
                     dones.append(done)
                     rewards.append(rew)
+                    self.store_transition(ob, ac, rew, ob_next, done)
                     steps += 1
                     if done or steps > max_path_length:
                         break
@@ -178,11 +220,15 @@ class DDPG(object):
             ob_no = np.concatenate([path["observation"] for path in paths])
             ac_na = np.concatenate([path["action"] for path in paths])
 
-
-
             # todo train process
             # todo memory sample in paths
+            epoch_actor_losses = []
+            epoch_critic_losses = []
             for epoch in range(batch_epochs):
+                cl, al = self.train()
+                epoch_critic_losses.append(cl)
+                epoch_actor_losses.append(al)
+                self.soft_sync_target_actor()
                 # Log diagnostics
                 returns = [path["reward"].sum() for path in paths]
                 ep_lengths = [pathlength(path) for path in paths]

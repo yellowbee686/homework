@@ -1,13 +1,11 @@
 import numpy as np
+from pg_utils import *
 import tensorflow as tf
 import gym
-#from . import logz
 import logz
 import os
 import time
 import inspect
-from .pg_utils import *
-#import pg_utils
 from multiprocessing import Process
 
 class PPO(object):
@@ -208,7 +206,7 @@ class PPO(object):
                 if reward_to_go:
                     q = [np.sum(np.power(self.gamma, np.arange(max_step - t)) * reward[t:]) for t in range(max_step)]
                 else:  # 整个trajectory的q值估算
-                    q = [np.sum(np.power(self.gammagamma, np.arange(max_step)) * reward) for t in range(max_step)]
+                    q = [np.sum(np.power(self.gamma, np.arange(max_step)) * reward) for t in range(max_step)]
                 q_n.extend(q)
 
             for epoch in range(batch_epochs):
