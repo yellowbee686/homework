@@ -6,6 +6,7 @@ import logz
 import time
 import inspect
 from memory import Memory
+import os
 
 #todo add action_noise
 #todo add every normalize denormalize
@@ -245,3 +246,91 @@ class DDPG(object):
                 logz.log_tabular("TimestepsSoFar", total_timesteps)
                 logz.dump_tabular()
                 logz.pickle_tf_vars()
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('env_name', type=str)
+    parser.add_argument('--exp_name', type=str, default='ddpg')
+    parser.add_argument('--render', action='store_true')
+    parser.add_argument('--discount', type=float, default=1.0)
+    parser.add_argument('--n_iter', '-n', type=int, default=100)
+    parser.add_argument('--batch_size', '-b', type=int, default=1000)
+    parser.add_argument('--ep_len', '-ep', type=float, default=-1.)
+    parser.add_argument('--actor_learning_rate', '-alr', type=float, default=5e-5)
+    parser.add_argument('--critic_learning_rate', '-clr', type=float, default=5e-4)
+    parser.add_argument('--critic_update_tau', '-tau', type=float, default=0.001)
+    parser.add_argument('--dont_normalize_advantages', '-dna', action='store_true')
+    parser.add_argument('--seed', '-seed', type=int, default=1)
+    parser.add_argument('--n_experiments', '-e', type=int, default=1)
+    parser.add_argument('--n_layers', '-l', type=int, default=1)
+    parser.add_argument('--size', '-s', type=int, default=32)
+    parser.add_argument('--gae_lambda', '-gae', type=float, default=-1.0)
+    parser.add_argument('--batch_epochs', '-be', type=int, default=1)
+    args = parser.parse_args()
+
+    if not (os.path.exists('data')):
+        os.makedirs('data')
+    logdir = args.exp_name + '_' + args.env_name + '_' + time.strftime("%d-%m-%Y_%H-%M-%S")
+    logdir = os.path.join('data', logdir)
+    if not (os.path.exists(logdir)):
+        os.makedirs(logdir)
+
+    max_path_length = args.ep_len if args.ep_len > 0 else None
+
+    # for e in range(args.n_experiments):
+    #     seed = args.seed + 10*e
+    #     print('Running experiment with seed %d'%seed)
+    #     def train_func():
+    #         train_PG(
+    #             exp_name=args.exp_name,
+    #             env_name=args.env_name,
+    #             n_iter=args.n_iter,
+    #             gamma=args.discount,
+    #             min_timesteps_per_batch=args.batch_size,
+    #             max_path_length=max_path_length,
+    #             learning_rate=args.learning_rate,
+    #             reward_to_go=args.reward_to_go,
+    #             animate=args.render,
+    #             logdir=os.path.join(logdir,'%d'%seed),
+    #             normalize_advantages=not(args.dont_normalize_advantages),
+    #             nn_baseline=args.nn_baseline,
+    #             seed=seed,
+    #             n_layers=args.n_layers,
+    #             size=args.size
+    #             )
+    #     # Awkward hacky process runs, because Tensorflow does not like
+    #     # repeatedly calling train_PG in the same thread.
+    #     p = Process(target=train_func, args=tuple())
+    #     p.start()
+    #     p.join()
+
+    seed = args.seed
+    print('Running experiment with seed %d' % seed)
+    ddpg = DDPG(
+        exp_name=args.exp_name,
+        env_name = args.env_name,
+        gamma = args.discount,
+        actor_lr=args.actor_learning_rate,
+        critic_lr=args.critic_learning_rate,
+        logdir=os.path.join(logdir, '%d' % seed),
+        normalize_returns=not (args.dont_normalize_advantages),
+        # network arguments
+        n_layers=args.n_layers,
+        size=args.size,
+        gae_lambda=args.gae_lambda,
+        tau=args.critic_update_tau,
+    )
+    ddpg.train(
+        n_iter=args.n_iter,
+        seed=seed,
+        min_timesteps_per_batch=args.batch_size,
+        animate=args.render,
+        batch_epochs=args.batch_epochs,
+        batch_size=args.batch_size,
+        max_path_length=max_path_length
+    )
+
+if __name__ == "__main__":
+    main()
