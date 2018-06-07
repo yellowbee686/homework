@@ -34,6 +34,9 @@ class DDPG(object):
         self.sy_critic_targets = tf.placeholder(tf.float32, shape=[None, 1], name="sy_critic_targets")
         self.param_noise_stddev = tf.placeholder(tf.float32, shape=(), name='param_noise_stddev')
         # actions的维度为整个actions选择的概率，而不只是输出一个被选择的action
+        # tensorforce是按以下实现的，因此应该也是输入的概率
+        # x_actions = tf.reshape(tf.cast(x_actions, dtype=tf.float32), (-1, 1))
+        # 现在的问题是cartpole返回的shape是一个() 空tuple 但实际上应该是两个action 感觉应该是个bug
         self.sy_actions = tf.placeholder(tf.float32, shape=[None, ac_dim], name='actions')
 
     def setup_network(self):
@@ -109,7 +112,10 @@ class DDPG(object):
         self.env = gym.make(env_name)
         # Is this env continuous, or discrete?
         self.discrete = isinstance(self.env.action_space, gym.spaces.Discrete)
-        self.memory = Memory(limit=int(1e6), action_shape=self.env.action_space.shape, observation_shape=self.env.observation_space.shape)
+        print('aaa')
+        print(self.env.action_space)
+        ac_dim = self.env.action_space.n if self.discrete else self.env.action_space.shape[0]
+        self.memory = Memory(limit=int(1e6), action_shape=ac_dim, observation_shape=self.env.observation_space.shape)
         self.setup_placeholders()
         self.setup_network()
 
@@ -123,7 +129,8 @@ class DDPG(object):
             action, action_prob = self.sess.run([self.actor_choose_action, self.actor_tf], feed_dict=feed_dict)
             q = None
 
-        #action_prob = action_prob.flatten()
+        # 去除多余的维度
+        action_prob = action_prob.flatten()
         return action, action_prob, q
 
     def soft_sync_target_actor(self):

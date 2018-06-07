@@ -44,7 +44,11 @@ class Memory(object):
         self.limit = limit
 
         self.observations0 = RingBuffer(limit, shape=observation_shape)
-        self.actions = RingBuffer(limit, shape=action_shape)
+        # print('setup memory action_shape')
+        # print(action_shape)
+        # action_shape是int，这里要(action_shape,) 防止退化为int 内部是tuple相加，不接受int
+        self.actions = RingBuffer(limit, shape=(action_shape,))
+        print(self.actions.data)
         self.rewards = RingBuffer(limit, shape=(1,))
         self.terminals1 = RingBuffer(limit, shape=(1,))
         self.observations1 = RingBuffer(limit, shape=observation_shape)
@@ -73,6 +77,7 @@ class Memory(object):
             return
 
         self.observations0.append(obs0)
+        # print('store sample action=%r'%(action))
         self.actions.append(action)
         self.rewards.append(reward)
         self.observations1.append(obs1)
