@@ -44,6 +44,7 @@ def build_actor(state_input, output_size,
             x = activation(x)
         # activation直接传入func tf.tanh等价于tf.nn.tanh
         x = tf.layers.dense(x, output_size, kernel_initializer=tf.random_uniform_initializer(minval=-3e-3, maxval=3e-3), activation=output_activation)
+        return x
 
 def build_critic(state_input, action_input,
                 scope_name='critic', n_layers=2, hidden_size=64, norm=True, reuse=False,
@@ -61,11 +62,14 @@ def build_critic(state_input, action_input,
             #第一层之后传入action作为输入
             if i == 1:
                 x = tf.concat([x, action_input], axis=-1)
-        # critic 最终直接输出为线性层
+        # critic 最终直接输出为线性层，输出只有一维，对应着当前state和action的Q值
         x = tf.layers.dense(x, 1, kernel_initializer=tf.random_uniform_initializer(minval=-3e-3, maxval=3e-3))
+        # x = tf.squeeze(x)
+        return x
 
 def get_target_updates(vars, target_vars, tau):
     #logger.info('setting up target updates ...')
+    print('get_target_updates var_len=%d target_vars_len=%d' % (len(vars), len(target_vars)))
     soft_updates = []
     init_updates = []
     assert len(vars) == len(target_vars)

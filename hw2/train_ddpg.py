@@ -29,7 +29,7 @@ class DDPG(object):
         # placeholders前面都加一个前缀是好文明，可以方便在之后区分variable和placeholder
         self.sy_ob_no = tf.placeholder(tf.float32, shape=[None, ob_dim], name="ob")
         self.sy_ob_next = tf.placeholder(tf.float32, shape=[None, ob_dim], name="ob_next")
-        self.terminal_next = tf.placeholder(tf.int32, shape=[None, 1], name="terminal_next")
+        self.terminal_next = tf.placeholder(tf.float32, shape=[None, 1], name="terminal_next")
         self.sy_rewards = tf.placeholder(tf.float32, shape=[None, 1], name="sy_rewards")
         self.sy_critic_targets = tf.placeholder(tf.float32, shape=[None, 1], name="sy_critic_targets")
         self.param_noise_stddev = tf.placeholder(tf.float32, shape=(), name='param_noise_stddev')
@@ -37,24 +37,24 @@ class DDPG(object):
         self.sy_actions = tf.placeholder(tf.float32, shape=[None, ac_dim], name='actions')
 
     def setup_network(self):
-        # 指定Reuse即可reuse同一个scope下的网络参数
+        # 指定Reuse即可reuse同一个scope下的网络参数 self.actor返回一个tensor，表示选择每个action的概率
         self.actor_tf = build_actor(self.sy_ob_no, self.ac_dim, scope_name='actor')
+        # 默认axis为0 会返回[0,0]，即沿着第0维归一化，由于只有一个数，因此固定返回0,0
+        # tf.argmax返回一个[1] 的tensor 使用tf.squeeze规约为int 否则env.step会检查不通过
+        self.actor_choose_action = tf.squeeze(tf.argmax(self.actor_tf, axis=1))
         # target 输入下一次的ob
         self.target_actor_tf = build_actor(self.sy_ob_next, self.ac_dim, scope_name='target_actor')
-        # 输入的是action的placeholder
+
+        # 输入的是action的placeholder 这里可以选择输入action的选择概率，即actor_network的原始输出
+        # 也可以选择输入argmax之后的action index
         self.critic_tf = build_critic(self.sy_ob_no, self.sy_actions, scope_name='critic')
         # 输入的是模型的action概率分布，将这个输入到critic的第二层，也算是actor和critic共用一部分参数
         # critic_tf和critic_with_actor_tf使用同一个网络，只是输入的action不同
         self.critic_with_actor_tf = build_critic(self.sy_ob_no, self.actor_tf, scope_name='critic', reuse=True)
         # 计算next_q时用的是target_actor的输出作为actor部分的输入
         next_q = build_critic(self.sy_ob_next, self.target_actor_tf, scope_name='target_critic')
+        # terminal_next如果是tf.int32的placeholder，则会报 *
         self.target_q = self.sy_rewards + (1 - self.terminal_next) * self.gamma * next_q
-
-        # setup loss
-        self.actor_loss = -tf.reduce_mean(self.critic_with_actor_tf)
-        self.actor_update_op = tf.train.AdamOptimizer(self.actor_lr).minimize(self.actor_loss)
-        self.critic_loss = tf.reduce_mean(tf.square(self.critic_tf, self.sy_critic_targets))
-        self.critic_update_op = tf.train.AdamOptimizer(self.critic_lr).minimize(self.critic_loss)
 
         # setup var updates
         actor_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='actor')
@@ -65,6 +65,14 @@ class DDPG(object):
         critic_init_updates, critic_soft_updates = get_target_updates(critic_vars, target_critic_vars, self.tau)
         self.target_init_updates = [actor_init_updates, critic_init_updates]
         self.target_soft_updates = [actor_soft_updates, critic_soft_updates]
+
+        # setup loss
+        self.actor_loss = -tf.reduce_mean(self.critic_with_actor_tf)
+        # 构造AdamOptimizer.minimize之后，会让actor_vars中的参数膨胀两倍，因此需要先设置updates，再设置loss
+        self.actor_update_op = tf.train.AdamOptimizer(self.actor_lr).minimize(self.actor_loss)
+        self.critic_loss = tf.reduce_mean(tf.square(self.critic_tf-self.sy_critic_targets))
+        self.critic_update_op = tf.train.AdamOptimizer(self.critic_lr).minimize(self.critic_loss)
+
 
     def __init__(self,
                  exp_name='',
@@ -107,13 +115,16 @@ class DDPG(object):
 
     def sample_action(self,obs,compute_Q=True):
         feed_dict = {self.sy_ob_no:[obs]}
+        # baseline的代码中这里直接输出action的选择概率，而且传入env.step时乘以env.high 应该是用于连续action的做法
+        # 而我们求argmax则是用于离散action的做法
         if compute_Q:
-            action, q = self.sess.run([self.actor_tf, self.critic_with_actor_tf], feed_dict=feed_dict)
+            action, action_prob, q = self.sess.run([self.actor_choose_action, self.actor_tf, self.critic_with_actor_tf], feed_dict=feed_dict)
         else:
-            action = self.sess.run(self.actor_tf, feed_dict=feed_dict)
+            action, action_prob = self.sess.run([self.actor_choose_action, self.actor_tf], feed_dict=feed_dict)
             q = None
-        action = action.flatten()
-        return action, q
+
+        #action_prob = action_prob.flatten()
+        return action, action_prob, q
 
     def soft_sync_target_actor(self):
         self.sess.run(self.target_soft_updates)
@@ -143,7 +154,7 @@ class DDPG(object):
     def train(self,
               seed=0,
               n_iter=100,
-              animate=True,
+              animate=False,
               min_timesteps_per_batch=1000,
               batch_epochs=1,
               batch_size = 32,
@@ -163,16 +174,15 @@ class DDPG(object):
         sess.__enter__()  # equivalent to `with sess:`
         tf.global_variables_initializer().run()  # pylint: disable=E1101
         sess.run(self.target_init_updates)
-        sess.graph.finalize() #make it readonly, speed up
+        #sess.graph.finalize() #make it readonly, speed up
         # ========================================================================================#
         # Training Loop
         # ========================================================================================#
-
+        #max_action = self.env.action_space.high
         total_timesteps = 0
 
         for itr in range(n_iter):
-            print("********** Iteration %i ************" % itr)
-
+            #print('start train itr=%d max_step=%d batch=%d'%(itr, max_path_length, min_timesteps_per_batch))
             # Collect paths until we have enough timesteps
             # 每一轮结束或者超过max_path_length时会结束一次path
             # 每一轮path结束后填充到paths中，检查一次总的batch步数是否超过batch需求数，超过了则退出，开始训练
@@ -184,6 +194,7 @@ class DDPG(object):
             paths = []
             while True:
                 ob = self.env.reset()
+                #obs, acs, ac_probs, rewards, ob_nexts, dones = [], [], [], [], [], []
                 obs, acs, rewards, ob_nexts, dones = [], [], [], [], []
                 animate_this_episode = (len(paths) == 0 and (itr % 10 == 0) and animate)
                 steps = 0
@@ -195,13 +206,14 @@ class DDPG(object):
                     # eval_obs, eval_r, eval_done, eval_info = eval_env.step(max_action * eval_action)
                     # scale for execution in env (as far as DDPG is concerned, every action is in [-1, 1])
                     # baseline将action限制在-1,1 再scale 可以看下这样是否有必要
-                    ac, q = self.sample_action(ob, True)
+                    ac, ac_prob, q = self.sample_action(ob, False)
                     acs.append(ac)
+                    #ac_probs.append(ac_prob)
                     ob_next, rew, done, _ = self.env.step(ac)
                     ob_nexts.append(ob_next)
                     dones.append(done)
                     rewards.append(rew)
-                    self.store_transition(ob, ac, rew, ob_next, done)
+                    self.store_transition(ob, ac_prob, rew, ob_next, done)
                     steps += 1
                     if done or steps > max_path_length:
                         break
@@ -226,13 +238,14 @@ class DDPG(object):
             epoch_actor_losses = []
             epoch_critic_losses = []
             for epoch in range(batch_epochs):
-                cl, al = self.train()
+                cl, al = self.update_loss()
                 epoch_critic_losses.append(cl)
                 epoch_actor_losses.append(al)
                 self.soft_sync_target_actor()
                 # Log diagnostics
                 returns = [path["reward"].sum() for path in paths]
                 ep_lengths = [pathlength(path) for path in paths]
+                #print('log iter %d'%itr)
                 #logz.log_tabular("LossDelta", loss_1 - loss_2)
                 logz.log_tabular("Time", time.time() - start)
                 logz.log_tabular("Iteration", itr)
@@ -255,7 +268,7 @@ def main():
     parser.add_argument('--exp_name', type=str, default='ddpg')
     parser.add_argument('--render', action='store_true')
     parser.add_argument('--discount', type=float, default=1.0)
-    parser.add_argument('--n_iter', '-n', type=int, default=100)
+    parser.add_argument('--n_iter', '-n', type=int, default=1000)
     parser.add_argument('--batch_size', '-b', type=int, default=1000)
     parser.add_argument('--ep_len', '-ep', type=float, default=-1.)
     parser.add_argument('--actor_learning_rate', '-alr', type=float, default=5e-5)
