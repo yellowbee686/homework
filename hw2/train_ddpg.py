@@ -112,8 +112,6 @@ class DDPG(object):
         self.env = gym.make(env_name)
         # Is this env continuous, or discrete?
         self.discrete = isinstance(self.env.action_space, gym.spaces.Discrete)
-        print('aaa')
-        print(self.env.action_space)
         ac_dim = self.env.action_space.n if self.discrete else self.env.action_space.shape[0]
         self.memory = Memory(limit=int(1e6), action_shape=ac_dim, observation_shape=self.env.observation_space.shape)
         self.setup_placeholders()

@@ -1,7 +1,6 @@
 import numpy as np
 import tensorflow as tf
 import gym
-#from . import logz
 import logz
 import os
 import time
@@ -193,7 +192,8 @@ def train_PG(exp_name='', #参数方案的名称
     else: #vanilla pg
         loss = tf.reduce_mean(-sy_logprob_n * sy_adv_n)
 
-    loss = tf.Print(loss, [loss, loss.shape], 'debug loss')
+    #loss = tf.Print(loss, [loss, loss.shape], 'debug loss')
+    tf.summary.scalar('loss', loss)
     update_op = tf.train.AdamOptimizer(learning_rate).minimize(loss)
 
     # ========================================================================================#
@@ -212,6 +212,7 @@ def train_PG(exp_name='', #参数方案的名称
         # neural network baseline. These will be used to fit the neural network baseline. 
         baseline_targets = tf.placeholder(shape=[None], name='baseline_targets', dtype=tf.float32)
         baseline_loss = tf.nn.l2_loss(baseline_prediction - baseline_targets)
+        tf.summary.scalar('baseline_loss', baseline_loss)
         baseline_update_op = tf.train.AdamOptimizer(learning_rate).minimize(baseline_loss)
 
     # ========================================================================================#

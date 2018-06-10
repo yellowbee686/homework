@@ -10,7 +10,6 @@ from multiprocessing import Process
 
 class PPO(object):
     def __init__(self,
-                 exp_name='', #参数方案的名称
                  env_name='CartPole-v0',
                  gamma=1.0,
                  max_path_length=None,
@@ -37,6 +36,7 @@ class PPO(object):
         self.clip_ratio = clip_ratio
         # Configure output directory for logging
         logz.configure_output_dir(logdir)
+        self.log_dir = logdir
         # Log experimental parameters
         # args = inspect.getfullargspec(__init__)[0]
         # locals_ = locals()
@@ -120,11 +120,11 @@ class PPO(object):
         else:  # vanilla pg
             self.loss = tf.reduce_mean(-self.sy_logprob_n * self.sy_adv_n)
 
-        #self.loss = tf.Print(self.loss, [self.loss, self.loss.shape], 'debug loss')
+        tf.summary.scalar('loss', self.loss)
         self.update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
 
     def setup_baseline(self):
-        baseline_prediction = tf.squeeze(build_mlp(
+        self.baseline_prediction = tf.squeeze(build_mlp(
             self.sy_ob_no,
             1,
             "nn_baseline",
@@ -132,8 +132,9 @@ class PPO(object):
             size=self.size))
         # Define placeholders for targets, a loss function and an update op for fitting a
         # neural network baseline. These will be used to fit the neural network baseline.
-        baseline_targets = tf.placeholder(shape=[None], name='baseline_targets', dtype=tf.float32)
-        self.baseline_loss = tf.nn.l2_loss(baseline_prediction - baseline_targets)
+        self.baseline_targets = tf.placeholder(shape=[None], name='baseline_targets', dtype=tf.float32)
+        self.baseline_loss = tf.nn.l2_loss(self.baseline_prediction - self.baseline_targets)
+        tf.summary.scalar('baseline_loss', self.baseline_loss)
         self.baseline_update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.baseline_loss)
 
     def train(self,
@@ -153,6 +154,8 @@ class PPO(object):
         sess.__enter__()  # equivalent to `with sess:`
         tf.global_variables_initializer().run()  # pylint: disable=E1101
         total_timesteps = 0
+        merged_summary = tf.summary.merge_all()
+        self.summary_writer = tf.summary.FileWriter(self.log_dir, sess.graph)
         for itr in range(n_iter):
             # Collect paths until we have enough timesteps
             # 每一轮结束或者超过max_path_length时会结束一次path
@@ -209,6 +212,7 @@ class PPO(object):
                     q = [np.sum(np.power(self.gamma, np.arange(max_step)) * reward) for t in range(max_step)]
                 q_n.extend(q)
 
+            epoch_step = 1
             for epoch in range(batch_epochs):
                 # ====================================================================================#
                 #                           ----------SECTION 5----------
@@ -281,14 +285,17 @@ class PPO(object):
                 # 输出两次loss是为了下面的log
                 feed_dict = {self.sy_ob_no: ob_no, self.sy_ac_na: ac_na, self.sy_adv_n: adv_n}
                 sess.run(self.param_assign_op, feed_dict)
-                loss_1 = sess.run(self.loss, feed_dict)
-                sess.run(self.update_op, feed_dict)
-                loss_2 = sess.run(self.loss, feed_dict)
-
+                #loss_1 = sess.run(self.loss, feed_dict)
+                _, summary_val = sess.run([self.update_op, merged_summary], feed_dict)
+                #loss_2 = sess.run(self.loss, feed_dict)
+                global_step = itr*batch_epochs+epoch_step
+                epoch_step = epoch_step+1
+                self.summary_writer.add_summary(summary_val, global_step)
+                #self.summary_writer.flush()
                 # Log diagnostics
                 returns = [path["reward"].sum() for path in paths]
                 ep_lengths = [pathlength(path) for path in paths]
-                logz.log_tabular("LossDelta", loss_1 - loss_2)
+                #logz.log_tabular("LossDelta", loss_1 - loss_2)
                 logz.log_tabular("Time", time.time() - start)
                 logz.log_tabular("Iteration", itr)
                 logz.log_tabular("AverageReturn", np.mean(returns))
@@ -302,12 +309,14 @@ class PPO(object):
                 logz.dump_tabular()
                 logz.pickle_tf_vars()
 
+        self.summary_writer.flush()
+
 
 def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('env_name', type=str)
-    parser.add_argument('--exp_name', type=str, default='vpg')
+    parser.add_argument('--exp_name', '-algo', type=str, default='vpg')
     parser.add_argument('--render', action='store_true')
     parser.add_argument('--discount', type=float, default=1.0)
     parser.add_argument('--n_iter', '-n', type=int, default=100)
@@ -364,7 +373,6 @@ def main():
     seed = args.seed
     print('Running experiment with seed %d' % seed)
     ppo = PPO(
-        exp_name=args.exp_name,
         env_name=args.env_name,
         gamma=args.discount,
         max_path_length=max_path_length,
@@ -375,7 +383,7 @@ def main():
         n_layers=args.n_layers,
         size=args.size,
         gae_lambda=args.gae_lambda,
-        model_tag='ppo'
+        model_tag=args.exp_name
     )
     ppo.train(n_iter=args.n_iter,
               seed=seed,
