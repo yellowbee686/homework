@@ -10,7 +10,10 @@ from multiprocessing import Process
 
 class PPO(object):
     def __init__(self,
-                 env_name='CartPole-v0',
+                 env=None,
+                 discrete = True,
+                 ob_dim = 0,
+                 ac_dim = 0,
                  gamma=1.0,
                  max_path_length=None,
                  learning_rate=5e-3,
@@ -44,11 +47,13 @@ class PPO(object):
         # logz.save_params(params)
 
         # Make the gym environment
-        self.env = gym.make(env_name)
+        self.env = env
+        self.ob_dim = ob_dim
+        self.ac_dim = ac_dim
         # Is this env continuous, or discrete?
-        self.discrete = isinstance(self.env.action_space, gym.spaces.Discrete)
+        self.discrete = discrete
         # Maximum length for episodes
-        self.max_path_length = max_path_length or self.env.spec.max_episode_steps
+        self.max_path_length = max_path_length
         self.setup_placeholders()
         self.setup_tf_operations()
         self.setup_loss()
@@ -57,8 +62,6 @@ class PPO(object):
 
     def setup_placeholders(self):
         # Observation and action sizes
-        self.ob_dim = self.env.observation_space.shape[0]
-        self.ac_dim = self.env.action_space.n if self.discrete else self.env.action_space.shape[0]
 
         self.sy_ob_no = tf.placeholder(shape=[None, self.ob_dim], name="ob", dtype=tf.float32)
         if self.discrete:
@@ -341,8 +344,6 @@ def main():
     if not (os.path.exists(logdir)):
         os.makedirs(logdir)
 
-    max_path_length = args.ep_len if args.ep_len > 0 else None
-
     # for e in range(args.n_experiments):
     #     seed = args.seed + 10*e
     #     print('Running experiment with seed %d'%seed)
@@ -371,9 +372,18 @@ def main():
     #     p.join()
 
     seed = args.seed
+    # 独立出gym的一些配置为参数，方便应用算法到其他地方
+    env = gym.make(args.env_name)
+    discrete = isinstance(env.action_space, gym.spaces.Discrete)
+    max_path_length = args.ep_len if args.ep_len > 0 else env.spec.max_episode_steps
+    ob_dim = env.observation_space.shape[0]
+    ac_dim = env.action_space.n if discrete else env.action_space.shape[0]
     print('Running experiment with seed %d' % seed)
     ppo = PPO(
-        env_name=args.env_name,
+        env=env,
+        discrete=discrete,
+        ob_dim=ob_dim,
+        ac_dim=ac_dim,
         gamma=args.discount,
         max_path_length=max_path_length,
         learning_rate=args.learning_rate,
