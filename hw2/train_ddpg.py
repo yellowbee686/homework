@@ -14,11 +14,6 @@ import os
 
 class DDPG(object):
     def setup_placeholders(self):
-        # Observation and action sizes
-        ob_dim = self.env.observation_space.shape[0]
-        ac_dim = self.env.action_space.n if self.discrete else self.env.action_space.shape[0]
-        self.ac_dim = ac_dim
-        self.ob_dim = ob_dim
         # placeholders
         # Prefixes and suffixes:
         # ob - observation
@@ -27,8 +22,8 @@ class DDPG(object):
         # _na - this tensor should have shape (batch size /n/, action dim)
         # _n  - this tensor should have shape (batch size /n/)
         # placeholders前面都加一个前缀是好文明，可以方便在之后区分variable和placeholder
-        self.sy_ob_no = tf.placeholder(tf.float32, shape=[None, ob_dim], name="ob")
-        self.sy_ob_next = tf.placeholder(tf.float32, shape=[None, ob_dim], name="ob_next")
+        self.sy_ob_no = tf.placeholder(tf.float32, shape=[None, self.ob_dim], name="ob")
+        self.sy_ob_next = tf.placeholder(tf.float32, shape=[None, self.ob_dim], name="ob_next")
         self.terminal_next = tf.placeholder(tf.float32, shape=[None, 1], name="terminal_next")
         self.sy_rewards = tf.placeholder(tf.float32, shape=[None, 1], name="sy_rewards")
         self.sy_critic_targets = tf.placeholder(tf.float32, shape=[None, 1], name="sy_critic_targets")
@@ -37,7 +32,7 @@ class DDPG(object):
         # tensorforce是按以下实现的，因此应该也是输入的概率
         # x_actions = tf.reshape(tf.cast(x_actions, dtype=tf.float32), (-1, 1))
         # 现在的问题是cartpole返回的shape是一个() 空tuple 但实际上应该是两个action 感觉应该是个bug
-        self.sy_actions = tf.placeholder(tf.float32, shape=[None, ac_dim], name='actions')
+        self.sy_actions = tf.placeholder(tf.float32, shape=[None, self.ac_dim], name='actions')
 
     def setup_network(self):
         # 指定Reuse即可reuse同一个scope下的网络参数 self.actor返回一个tensor，表示选择每个action的概率
@@ -78,8 +73,10 @@ class DDPG(object):
 
 
     def __init__(self,
-                 exp_name='',
-                 env_name='CartPole-v0',
+                 env=None,
+                 discrete=True,
+                 ob_shape=(),
+                 ac_dim=0,
                  gamma=1.0,
                  actor_lr=1e-4,
                  critic_lr=1e-3,
@@ -109,11 +106,13 @@ class DDPG(object):
         # logz.save_params(params)
 
         # Make the gym environment
-        self.env = gym.make(env_name)
+        self.env = env
         # Is this env continuous, or discrete?
-        self.discrete = isinstance(self.env.action_space, gym.spaces.Discrete)
-        ac_dim = self.env.action_space.n if self.discrete else self.env.action_space.shape[0]
-        self.memory = Memory(limit=int(1e6), action_shape=ac_dim, observation_shape=self.env.observation_space.shape)
+        self.discrete = discrete
+        self.ac_dim = ac_dim
+        self.ob_dim = ob_shape[0]
+        #observation_shape in cartpole is (2,) 一个tuple
+        self.memory = Memory(limit=int(1e6), action_shape=ac_dim, observation_shape=ob_shape)
         self.setup_placeholders()
         self.setup_network()
 
@@ -171,7 +170,7 @@ class DDPG(object):
         tf.set_random_seed(seed)
         np.random.seed(seed)
         # Maximum length for episodes
-        max_path_length = max_path_length or self.env.spec.max_episode_steps
+        max_path_length = max_path_length
         tf_config = tf.ConfigProto(inter_op_parallelism_threads=1, intra_op_parallelism_threads=1)
 
         sess = tf.Session(config=tf_config)
@@ -179,6 +178,7 @@ class DDPG(object):
         sess.__enter__()  # equivalent to `with sess:`
         tf.global_variables_initializer().run()  # pylint: disable=E1101
         sess.run(self.target_init_updates)
+        # todo: use finalize to make sure no new node in graph
         #sess.graph.finalize() #make it readonly, speed up
         # ========================================================================================#
         # Training Loop
@@ -295,7 +295,11 @@ def main():
     if not (os.path.exists(logdir)):
         os.makedirs(logdir)
 
-    max_path_length = args.ep_len if args.ep_len > 0 else None
+    env = gym.make(args.env_name)
+    discrete = isinstance(env.action_space, gym.spaces.Discrete)
+    max_path_length = args.ep_len if args.ep_len > 0 else env.spec.max_episode_steps
+    ob_shape = env.observation_space.shape
+    ac_dim = env.action_space.n if discrete else env.action_space.shape[0]
 
     # for e in range(args.n_experiments):
     #     seed = args.seed + 10*e
@@ -327,8 +331,10 @@ def main():
     seed = args.seed
     print('Running experiment with seed %d' % seed)
     ddpg = DDPG(
-        exp_name=args.exp_name,
-        env_name = args.env_name,
+        env=env,
+        discrete=discrete,
+        ac_dim=ac_dim,
+        ob_shape=ob_shape,
         gamma = args.discount,
         actor_lr=args.actor_learning_rate,
         critic_lr=args.critic_learning_rate,
