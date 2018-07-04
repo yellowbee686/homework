@@ -126,8 +126,9 @@ class DDPG(object):
             action, action_prob = self.sess.run([self.actor_choose_action, self.actor_tf], feed_dict=feed_dict)
             q = None
 
-        # 去除多余的维度
+        # 去除多余的维度，并限制在-1到1之间
         action_prob = action_prob.flatten()
+        action_prob = np.clip(action_prob, -1., 1.)
         return action, action_prob, q
 
     def soft_sync_target_actor(self):
@@ -211,10 +212,17 @@ class DDPG(object):
                     # eval_obs, eval_r, eval_done, eval_info = eval_env.step(max_action * eval_action)
                     # scale for execution in env (as far as DDPG is concerned, every action is in [-1, 1])
                     # baseline将action限制在-1,1 再scale 可以看下这样是否有必要
-                    ac, ac_prob, q = self.sample_action(ob, False)
-                    acs.append(ac)
+                    if self.discrete:
+                        ac, ac_prob, q = self.sample_action(ob, False)
+                        acs.append(ac)
+                        ob_next, rew, done, _ = self.env.step(ac)
+                    else:
+                        _, ac_prob, q = self.sample_action(ob, False)
+                        #ac_prob = tf.Print(ac_prob, [ac_prob, ac_prob.shape], 'sample action')
+                        acs.append(ac_prob)
+                        ob_next, rew, done, _ = self.env.step(ac_prob)
                     #ac_probs.append(ac_prob)
-                    ob_next, rew, done, _ = self.env.step(ac)
+
                     ob_nexts.append(ob_next)
                     dones.append(done)
                     rewards.append(rew)

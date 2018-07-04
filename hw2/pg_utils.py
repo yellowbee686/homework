@@ -1,5 +1,6 @@
 import tensorflow as tf
 import tensorflow.contrib as tc
+import math
 
 def build_mlp(
         input_placeholder,
@@ -36,9 +37,11 @@ def build_actor(state_input, output_size,
         if reuse:
             scope.reuse_variables()
         x = state_input
+        init_weight = 1/math.sqrt(hidden_size)
         for i in range(n_layers):
             #不设activation则是线性层，因为中间要插layer_norm所以要单独设置
-            x = tf.layers.dense(x, hidden_size)
+            # x = tf.layers.dense(x, hidden_size)
+            x = tf.layers.dense(x, hidden_size, kernel_initializer=tf.random_uniform_initializer(minval=-init_weight, maxval=init_weight))
             if norm:
                 x = tc.layers.layer_norm(x, center=True, scale=True)
             x = activation(x)
@@ -53,9 +56,10 @@ def build_critic(state_input, action_input,
         if reuse:
             scope.reuse_variables()
         x = state_input
+        init_weight = 1 / math.sqrt(hidden_size)
         for i in range(n_layers):
             # 不设activation则是线性层，因为中间要插layer_norm所以要单独设置
-            x = tf.layers.dense(x, hidden_size)
+            x = tf.layers.dense(x, hidden_size, kernel_initializer=tf.random_uniform_initializer(minval=-init_weight, maxval=init_weight))
             if norm:
                 x = tc.layers.layer_norm(x, center=True, scale=True)
             x = activation(x)
