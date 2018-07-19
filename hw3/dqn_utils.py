@@ -2,8 +2,49 @@
 implementing DQN."""
 import gym
 import tensorflow as tf
+import tensorflow.contrib as tc
 import numpy as np
 import random
+
+def dueling_out(out, num_outputs):
+    expectation = tc.layers.fully_connected(out, num_outputs=1, activation_fn=None)
+    advantage = tc.layers.fully_connected(out, num_outputs=num_outputs, activation_fn=None)
+    # 计算mean时如果不指定keep_dims，也可以相减的时候用expand_dims展开回来 action_scores_centered = action_scores - tf.expand_dims(action_scores_mean, 1)
+    mean_advantage = tf.reduce_mean(advantage, axis=1, keep_dims=True)
+    out = expectation + advantage - mean_advantage
+    return out
+
+def mlp_model(ram_in, num_actions, scope, reuse=False, dueling=False):
+    with tf.variable_scope(scope, reuse=reuse):
+        out = ram_in
+        #out = tf.concat(1,(ram_in[:,4:5],ram_in[:,8:9],ram_in[:,11:13],ram_in[:,21:22],ram_in[:,50:51], ram_in[:,60:61],ram_in[:,64:65]))
+        with tf.variable_scope("action_value"):
+            out = tc.layers.fully_connected(out, num_outputs=256, activation_fn=tf.nn.relu)
+            out = tc.layers.fully_connected(out, num_outputs=128, activation_fn=tf.nn.relu)
+            out = tc.layers.fully_connected(out, num_outputs=64, activation_fn=tf.nn.relu)
+            if dueling:
+                out = dueling_out(out, num_actions)
+            else:
+                out = tc.layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
+        return out
+
+def cnn_model(img_in, num_actions, scope, reuse=False, dueling=False):
+    # as described in https://storage.googleapis.com/deepmind-data/assets/papers/DeepMindNature14236Paper.pdf
+    with tf.variable_scope(scope, reuse=reuse):
+        out = img_in
+        with tf.variable_scope("convnet"):
+            # original architecture
+            out = tc.layers.convolution2d(out, num_outputs=32, kernel_size=8, stride=4, activation_fn=tf.nn.relu)
+            out = tc.layers.convolution2d(out, num_outputs=64, kernel_size=4, stride=2, activation_fn=tf.nn.relu)
+            out = tc.layers.convolution2d(out, num_outputs=64, kernel_size=3, stride=1, activation_fn=tf.nn.relu)
+        out = tc.layers.flatten(out)
+        with tf.variable_scope("action_value"):
+            out = tc.layers.fully_connected(out, num_outputs=512,         activation_fn=tf.nn.relu)
+            if dueling:
+                out = dueling_out(out, num_actions)
+            else:
+                out = tc.layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
+        return out
 
 def huber_loss(x, delta=1.0):
     # https://en.wikipedia.org/wiki/Huber_loss

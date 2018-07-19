@@ -26,7 +26,8 @@ def learn(env,
           frame_history_len=4,
           target_update_freq=10000,
           grad_norm_clipping=10,
-          double_q = False,):
+          double_q = False,
+          dueling = False,):
     """Run Deep Q-learning algorithm.
 
     You can specify your own convnet using q_func.
@@ -133,8 +134,9 @@ def learn(env,
     # YOUR CODE HERE
 
     ######
-    q_network = q_func(obs_t_float, num_actions, "q_func", False)
-    target_q_network = q_func(obs_tp1_float, num_actions, "target_q_func", False)
+    q_network = q_func(obs_t_float, num_actions, "q_func", reuse=False, dueling=dueling)
+    target_q_network = q_func(obs_tp1_float, num_actions, "target_q_func", reuse=False, dueling=dueling)
+
     if double_q:
         best_action_index = tf.argmax(q_network, axis=1)
         best_next_q = tf.reduce_sum(target_q_network * tf.one_hot(best_action_index, num_actions), 1)

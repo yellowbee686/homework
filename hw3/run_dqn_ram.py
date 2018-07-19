@@ -11,19 +11,6 @@ import dqn
 from dqn_utils import *
 from atari_wrappers import *
 
-
-def atari_model(ram_in, num_actions, scope, reuse=False):
-    with tf.variable_scope(scope, reuse=reuse):
-        out = ram_in
-        #out = tf.concat(1,(ram_in[:,4:5],ram_in[:,8:9],ram_in[:,11:13],ram_in[:,21:22],ram_in[:,50:51], ram_in[:,60:61],ram_in[:,64:65]))
-        with tf.variable_scope("action_value"):
-            out = layers.fully_connected(out, num_outputs=256, activation_fn=tf.nn.relu)
-            out = layers.fully_connected(out, num_outputs=128, activation_fn=tf.nn.relu)
-            out = layers.fully_connected(out, num_outputs=64, activation_fn=tf.nn.relu)
-            out = layers.fully_connected(out, num_outputs=num_actions, activation_fn=None)
-
-        return out
-
 def atari_learn(env,
                 session,
                 num_timesteps):
@@ -58,7 +45,7 @@ def atari_learn(env,
 
     dqn.learn(
         env,
-        q_func=atari_model,
+        q_func=mlp_model,
         optimizer_spec=optimizer,
         session=session,
         exploration=exploration_schedule,

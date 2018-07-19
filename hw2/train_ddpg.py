@@ -120,6 +120,7 @@ class DDPG(object):
         feed_dict = {self.sy_ob_no:[obs]}
         # baseline的代码中这里直接输出action的选择概率，而且传入env.step时乘以env.high 应该是用于连续action的做法
         # 而我们求argmax则是用于离散action的做法
+        # build_critic(self.sy_ob_no, self.actor_tf, scope_name='critic', reuse=True) critic传入的是actor的输出
         if compute_Q:
             action, action_prob, q = self.sess.run([self.actor_choose_action, self.actor_tf, self.critic_with_actor_tf], feed_dict=feed_dict)
         else:
